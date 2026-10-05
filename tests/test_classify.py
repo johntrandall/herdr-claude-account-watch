@@ -69,7 +69,7 @@ ASSISTANT_PROSE = """
 # turn re-renders it). Not Claude's banner: must NOT match.
 STATUSLINE_LOGIN_ROW = """
 ⏺ Done.
-  identity: host: SusanBones | account: default
+  identity: host: devbox | account: default
                                      Not logged in · Run /login
   runtime:  Fable 5.1 | 885k/1.0m (88%)
 """ + PROMPT_BOX
