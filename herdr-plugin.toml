@@ -1,0 +1,49 @@
+id = "johntrandall.claude-account-watch"
+name = "Claude Account Watch"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Flag Claude Code panes that are logged out or have hit a usage limit; herdr otherwise shows them as plain idle."
+platforms = ["linux", "macos"]
+
+# Spawns the background sweeper once herdr's socket is ready. The sweeper
+# re-reads every Claude pane on an interval (default 60 s) and exits on SIGTERM.
+[[startup]]
+command = ["python3", "claude_account_watch.py", "start"]
+
+# Cheap, event-driven re-check of the one pane whose status just changed. The
+# usage-limit banner leaves the pane `idle`, so the sweep above is still needed.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "claude_account_watch.py", "event"]
+
+[[actions]]
+id = "sweep"
+title = "Claude Account Watch: sweep now"
+contexts = ["workspace", "pane"]
+command = ["python3", "claude_account_watch.py", "sweep"]
+
+[[actions]]
+id = "status"
+title = "Claude Account Watch: status + incidents"
+contexts = ["workspace", "pane"]
+command = ["python3", "claude_account_watch.py", "status"]
+
+[[actions]]
+id = "start"
+title = "Claude Account Watch: start sweeper"
+contexts = ["workspace"]
+command = ["python3", "claude_account_watch.py", "start"]
+
+[[actions]]
+id = "stop"
+title = "Claude Account Watch: stop sweeper"
+contexts = ["workspace"]
+command = ["python3", "claude_account_watch.py", "stop"]
+
+[[panes]]
+id = "log"
+title = "Claude Account Watch log"
+placement = "popup"
+width = "80%"
+height = 24
+command = ["python3", "claude_account_watch.py", "log"]
