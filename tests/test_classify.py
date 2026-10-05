@@ -74,6 +74,20 @@ STATUSLINE_LOGIN_ROW = """
   runtime:  Fable 5.1 | 885k/1.0m (88%)
 """ + PROMPT_BOX
 
+# Live captures from a real Claude Code 2.1.280 pane, 2026-10-05 (not the
+# wording the older docs quoted).
+REAL_MODEL_LIMIT = """
+❯ Reply with the single word ok.
+  ⎿  You've reached your Fable limit. Run /usage-credits to continue or switch
+     models with /model.
+✻ Churned for 1s · done 4:30 PM
+""" + PROMPT_BOX
+
+REAL_INVALID_KEY_RETRYING = """
+❯ Reply with the single word ok.
+✻ 401 API key is invalid. · Retrying in 13s · attempt 8/10
+""" + PROMPT_BOX
+
 # Scrollback far above the prompt is out of the tail window.
 OLD_BANNER_SCROLLED_AWAY = "⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel\n" + (
     "⏺ step\n  ⎿  ok\n" * 30
@@ -115,6 +129,12 @@ class ClassifyTests(unittest.TestCase):
 
     def test_statusline_login_row_ignored(self):
         self.assertIsNone(classify(STATUSLINE_LOGIN_ROW))
+
+    def test_real_model_limit_capture(self):
+        self.assertEqual(classify(REAL_MODEL_LIMIT)[0], "usage_limit")
+
+    def test_real_invalid_key_retrying_capture(self):
+        self.assertEqual(classify(REAL_INVALID_KEY_RETRYING)[0], "logged_out")
 
     def test_old_banner_outside_tail(self):
         self.assertIsNone(classify(OLD_BANNER_SCROLLED_AWAY, tail=30))

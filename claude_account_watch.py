@@ -73,6 +73,10 @@ USAGE_LIMIT_PATTERNS = [
     re.compile(r"^⎿\s*Credit balance (is )?too low", re.I),
     # ⎿  API Error: 429 … rate_limit_error … (hard refusal, not the soft wait banner)
     re.compile(r"^⎿\s*API Error: 429\b.*\b(usage|rate_limit|limit)", re.I),
+    # ⎿  You've reached your Fable limit. Run /usage-credits to continue or switch
+    #    models with /model.                      (live capture, Claude Code 2.1.280, 2026-10-05)
+    re.compile(r"^⎿\s*You.{0,3}ve reached your .{0,40}\blimit\b", re.I),
+    re.compile(r"^⎿\s*.*\bRun /usage-credits to continue", re.I),
 ]
 
 LOGGED_OUT_PATTERNS = [
@@ -84,6 +88,9 @@ LOGGED_OUT_PATTERNS = [
     re.compile(r"^⎿\s*.*\bInvalid API key\b", re.I),
     # ⚠ … run /login …   (startup / renewal warnings)
     re.compile(r"^⚠.*(?<!\S)/login\b"),
+    # ✻ 401 API key is invalid. · Retrying in 13s · attempt 8/10
+    #                                            (live capture, Claude Code 2.1.280, 2026-10-05)
+    re.compile(r"^\S?\s*401\b.*\b(API key is invalid|invalid|unauthori[sz]ed|authentication)", re.I),
     # Claude Code's own prompts, at line start only. Deliberately NOT matched:
     # a third-party statusline's "Not logged in" row -- it re-renders only on
     # the next turn, so it keeps claiming logged-out after a /login (2026-10-05).
@@ -92,7 +99,7 @@ LOGGED_OUT_PATTERNS = [
 
 KIND_LABEL = {
     "usage_limit": "!! usage limit",
-    "logged_out": "!! logged out",
+    "logged_out": "!! auth failed · /login",
 }
 
 
@@ -339,10 +346,11 @@ def check_pane(pane: dict, cfg: dict, incidents: dict) -> tuple[str, str] | None
         log(f"skip {pane_id}: {exc}")
         return None
     verdict = classify(screen, int(cfg["TAIL_LINES"]))
-    # A pane herdr sees as `working` is making progress: whatever is on its
-    # screen is history (a re-login kicked it, or it is a transcript that
-    # mentions the banner). Clear rather than flag.
-    if pane.get("agent_status") == "working":
+    # A `⎿` match on a pane herdr sees as `working` is most likely transcript
+    # (a tool result that printed a banner-shaped line): the real banners end
+    # the turn. Spinner-shaped matches (`✻ 401 … Retrying`) ARE working panes,
+    # so they are exempt from this gate.
+    if verdict and pane.get("agent_status") == "working" and verdict[1].startswith("⎿"):
         verdict = None
     if verdict:
         raise_alert(pane, verdict[0], verdict[1], cfg, incidents)
