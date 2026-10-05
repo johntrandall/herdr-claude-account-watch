@@ -53,34 +53,40 @@ WORKSPACE_TOKEN = "claude_alert"
 # Detection
 # --------------------------------------------------------------------------
 
-# Claude Code paints its live banners with one of these leading glyphs.
-# Requiring the glyph keeps ordinary transcript text (a tool result that
-# merely *mentions* "Usage limit reached") from tripping the watcher.
-BANNER_GLYPHS = "⚠⎿✗✘⏺●"
+# Every pattern is anchored to the SHAPE of a Claude Code error line, not just
+# its words: `⚠ <warning>` for live banners and `⎿  <error>` for a failed turn.
+# Assistant prose (`⏺ …`) and tool output that merely *mention* these phrases
+# (a transcript about limits, a `cat` of this file) must not match -- a
+# plugin that cries wolf gets disabled.
+#
+# Verified against Claude Code 2.1.287 strings; see tests/test_classify.py.
 
 USAGE_LIMIT_PATTERNS = [
     # ⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel
     # ⚠ Usage limit reached again after you continued · continuing automatically at 8am
-    re.compile(r"Usage limit reached\b.*\b(continuing automatically|esc or type)", re.I),
-    # ⎿  You've hit your weekly limit · resets 8am (America/New_York)
-    re.compile(r"hit your (weekly |session |5-hour |monthly )?limit\b.*\bresets\b", re.I),
+    re.compile(r"^⚠\s*Usage limit reached\b.*\b(continuing automatically|esc or type)", re.I),
     # ⚠ /usage-credits to continue now
-    re.compile(r"/usage-credits to continue", re.I),
-    # Run /usage-credits to continue or switch models with /model.
-    re.compile(r"credit balance (is )?too low", re.I),
+    re.compile(r"^⚠\s*/usage-credits to continue", re.I),
+    # ⎿  You've hit your weekly limit · resets 8am (America/New_York)
+    re.compile(r"^⎿\s*You.{0,3}ve hit your (weekly |session |5-hour |monthly )?limit\b.*\bresets\b", re.I),
+    # ⎿  Credit balance is too low. Run /usage-credits to continue …
+    re.compile(r"^⎿\s*Credit balance (is )?too low", re.I),
+    # ⎿  API Error: 429 … rate_limit_error … (hard refusal, not the soft wait banner)
+    re.compile(r"^⎿\s*API Error: 429\b.*\b(usage|rate_limit|limit)", re.I),
 ]
 
 LOGGED_OUT_PATTERNS = [
-    re.compile(r"\bPlease run /login\b", re.I),
-    re.compile(r"\brun /login to (renew|sign in)", re.I),
-    re.compile(r"\bRun /login, then try again", re.I),
-    re.compile(r"\bRun /login to sign in again", re.I),
-    re.compile(r"\(run /login\b", re.I),
-    re.compile(r"\bauthentication_error\b"),
-    re.compile(r"\bNot logged in\b", re.I),
-    re.compile(r"\btoken has expired\b", re.I),
-    re.compile(r"\bInvalid API key\b", re.I),
-    re.compile(r"API Error: 401\b"),
+    # ⎿  API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please run /login."}}
+    re.compile(r"^⎿\s*API Error: 401\b"),
+    re.compile(r"^⎿\s*.*\bauthentication_error\b"),
+    re.compile(r"^⎿\s*.*\b(Please run /login|run /login to (renew|sign in)|Run /login, then try again)", re.I),
+    re.compile(r"^⎿\s*.*\b(OAuth )?token has expired\b", re.I),
+    re.compile(r"^⎿\s*.*\bInvalid API key\b", re.I),
+    # ⚠ … run /login …   (startup / renewal warnings)
+    re.compile(r"^⚠.*\b/login\b"),
+    # Not logged in · Run /login   (status text; also what a wrapped statusline shows)
+    re.compile(r"\bNot logged in · Run /login\b"),
+    re.compile(r"^(Not logged in|Please run /login|Run /login to sign in)\b", re.I),
 ]
 
 KIND_LABEL = {
@@ -96,10 +102,6 @@ def _candidate_lines(screen: str, tail: int) -> list[str]:
     return non_empty[-tail:]
 
 
-def _is_banner_line(line: str) -> bool:
-    return bool(line) and line[0] in BANNER_GLYPHS
-
-
 def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
     """Return (kind, matched_line) or None.
 
@@ -109,13 +111,11 @@ def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
     """
     lines = _candidate_lines(screen, tail)
     for line in reversed(lines):
-        for pat in LOGGED_OUT_PATTERNS:
-            if pat.search(line) and (_is_banner_line(line) or line.lower().startswith(("api error", "not logged in", "run /login", "please run /login"))):
-                return ("logged_out", line)
+        if any(pat.search(line) for pat in LOGGED_OUT_PATTERNS):
+            return ("logged_out", line)
     for line in reversed(lines):
-        for pat in USAGE_LIMIT_PATTERNS:
-            if pat.search(line) and _is_banner_line(line):
-                return ("usage_limit", line)
+        if any(pat.search(line) for pat in USAGE_LIMIT_PATTERNS):
+            return ("usage_limit", line)
     return None
 
 
@@ -338,6 +338,11 @@ def check_pane(pane: dict, cfg: dict, incidents: dict) -> tuple[str, str] | None
         log(f"skip {pane_id}: {exc}")
         return None
     verdict = classify(screen, int(cfg["TAIL_LINES"]))
+    # A pane herdr sees as `working` is making progress: whatever is on its
+    # screen is history (a re-login kicked it, or it is a transcript that
+    # mentions the banner). Clear rather than flag.
+    if pane.get("agent_status") == "working":
+        verdict = None
     if verdict:
         raise_alert(pane, verdict[0], verdict[1], cfg, incidents)
     elif pane_id in incidents:
@@ -346,6 +351,7 @@ def check_pane(pane: dict, cfg: dict, incidents: dict) -> tuple[str, str] | None
 
 
 def sweep(cfg: dict) -> dict:
+    started = time.time()
     incidents = load_incidents()
     agents = list_watched_agents(cfg)
     live_panes = {a["pane_id"] for a in agents}
@@ -357,6 +363,7 @@ def sweep(cfg: dict) -> dict:
         check_pane(pane, cfg, incidents)
     update_workspace_rollups(incidents, {a["workspace_id"] for a in agents if a.get("workspace_id")}, cfg)
     save_incidents(incidents)
+    log(f"sweep: {len(agents)} panes, {len(incidents)} incident(s), {time.time() - started:.1f}s")
     return incidents
 
 

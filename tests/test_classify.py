@@ -57,6 +57,23 @@ CLEAN_MENTIONS = """
   The weekly-limit-recovery skill says: hit your weekly limit · resets 8am
 """ + PROMPT_BOX
 
+# Assistant prose that talks about logouts (the live false positive that
+# shipped the glyph-anchored patterns, 2026-10-05).
+ASSISTANT_PROSE = """
+⏺ I swept 140 live herdr panes plus recent session transcripts for any logout/auth
+  banner — "Please run /login", "authentication_error", "API Error: 401" — and
+  found none. Usage limit reached never appears either.
+""" + PROMPT_BOX
+
+# A statusline that reports login state, wrapped by the terminal so the
+# status text lands at a line start.
+WRAPPED_STATUSLINE = """
+⏺ Done.
+  identity: host: SusanBones | account: default
+                                     Not logged in · Run /login
+  runtime:  Fable 5.1 | 885k/1.0m (88%)
+""" + PROMPT_BOX
+
 # Scrollback far above the prompt is out of the tail window.
 OLD_BANNER_SCROLLED_AWAY = "⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel\n" + (
     "⏺ step\n  ⎿  ok\n" * 30
@@ -92,6 +109,12 @@ class ClassifyTests(unittest.TestCase):
 
     def test_mentions_do_not_trip(self):
         self.assertIsNone(classify(CLEAN_MENTIONS))
+
+    def test_assistant_prose_does_not_trip(self):
+        self.assertIsNone(classify(ASSISTANT_PROSE))
+
+    def test_wrapped_statusline_login_state(self):
+        self.assertEqual(classify(WRAPPED_STATUSLINE)[0], "logged_out")
 
     def test_old_banner_outside_tail(self):
         self.assertIsNone(classify(OLD_BANNER_SCROLLED_AWAY, tail=30))
