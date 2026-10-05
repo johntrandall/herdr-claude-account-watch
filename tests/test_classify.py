@@ -94,6 +94,18 @@ REAL_INVALID_KEY_FINAL = """
 ✻ Sautéed for 3m 7s · done 4:32 PM
 """ + PROMPT_BOX
 
+# Recovery: the failed turn's banner is still on screen, but a later prompt
+# succeeded. Only the latest turn counts, so this must be clean.
+RECOVERED_AFTER_BANNER = """
+❯ Reply with the single word ok.
+  ⎿  You've reached your Fable limit. Run /usage-credits to continue or switch
+     models with /model.
+✻ Cogitated for 1s · done 4:40 PM
+❯ Reply with the single word ok.
+⏺ ok
+✻ Pondered for 2s · done 4:43 PM
+""" + PROMPT_BOX
+
 # Scrollback far above the prompt is out of the tail window.
 OLD_BANNER_SCROLLED_AWAY = "⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel\n" + (
     "⏺ step\n  ⎿  ok\n" * 30
@@ -144,6 +156,9 @@ class ClassifyTests(unittest.TestCase):
 
     def test_real_invalid_key_final_capture(self):
         self.assertEqual(classify(REAL_INVALID_KEY_FINAL)[0], "logged_out")
+
+    def test_recovered_after_banner_is_clean(self):
+        self.assertIsNone(classify(RECOVERED_AFTER_BANNER))
 
     def test_old_banner_outside_tail(self):
         self.assertIsNone(classify(OLD_BANNER_SCROLLED_AWAY, tail=30))

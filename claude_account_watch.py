@@ -107,11 +107,25 @@ KIND_LABEL = {
 }
 
 
+PROMPT_ECHO = re.compile(r"^❯\s+\S")
+
+
 def _candidate_lines(screen: str, tail: int) -> list[str]:
-    """The last `tail` non-empty lines, each stripped of surrounding space."""
+    """The last `tail` non-empty lines, stripped, cut down to the LATEST turn.
+
+    Claude Code echoes each submitted prompt as `❯ <text>`. Only lines after
+    the last such echo belong to the current turn; a banner from an earlier,
+    failed turn is still on screen after a successful retry and must not keep
+    the alert alive (that is exactly how a cleared login kept reading
+    "logged out", 2026-10-05). With no echo in the window, the whole tail
+    counts (startup warnings, a fresh session).
+    """
     lines = [ln.rstrip() for ln in screen.splitlines()]
-    non_empty = [ln.strip() for ln in lines if ln.strip()]
-    return non_empty[-tail:]
+    non_empty = [ln.strip() for ln in lines if ln.strip()][-tail:]
+    for i in range(len(non_empty) - 1, -1, -1):
+        if PROMPT_ECHO.match(non_empty[i]):
+            return non_empty[i + 1:]
+    return non_empty
 
 
 def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
@@ -371,7 +385,10 @@ def sweep(cfg: dict) -> dict:
     # Panes that vanished since the last pass: drop their incidents silently.
     for stale in [p for p in incidents if p not in live_panes]:
         gone = incidents.pop(stale)
-        log(f"DROP {stale} [{gone.get('name', '')}] pane gone")
+        # The pane may still exist as a plain shell: clear its tokens too.
+        herdr("pane", "report-metadata", stale, "--source", PLUGIN_SOURCE,
+              "--clear-token", TOKEN_ALERT, "--clear-token", TOKEN_DETAIL, "--clear-state-labels")
+        log(f"DROP {stale} [{gone.get('name', '')}] agent gone")
     for pane in agents:
         check_pane(pane, cfg, incidents)
     update_workspace_rollups(incidents, {a["workspace_id"] for a in agents if a.get("workspace_id")}, cfg)
