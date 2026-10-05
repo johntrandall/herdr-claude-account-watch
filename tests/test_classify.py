@@ -88,6 +88,12 @@ REAL_INVALID_KEY_RETRYING = """
 ✻ 401 API key is invalid. · Retrying in 13s · attempt 8/10
 """ + PROMPT_BOX
 
+REAL_INVALID_KEY_FINAL = """
+❯ Reply with the single word ok.
+⏺ Please run /login · API Error: 401 API key is invalid.
+✻ Sautéed for 3m 7s · done 4:32 PM
+""" + PROMPT_BOX
+
 # Scrollback far above the prompt is out of the tail window.
 OLD_BANNER_SCROLLED_AWAY = "⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel\n" + (
     "⏺ step\n  ⎿  ok\n" * 30
@@ -135,6 +141,9 @@ class ClassifyTests(unittest.TestCase):
 
     def test_real_invalid_key_retrying_capture(self):
         self.assertEqual(classify(REAL_INVALID_KEY_RETRYING)[0], "logged_out")
+
+    def test_real_invalid_key_final_capture(self):
+        self.assertEqual(classify(REAL_INVALID_KEY_FINAL)[0], "logged_out")
 
     def test_old_banner_outside_tail(self):
         self.assertIsNone(classify(OLD_BANNER_SCROLLED_AWAY, tail=30))

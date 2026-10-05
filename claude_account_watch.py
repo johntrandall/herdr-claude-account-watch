@@ -91,6 +91,10 @@ LOGGED_OUT_PATTERNS = [
     # ✻ 401 API key is invalid. · Retrying in 13s · attempt 8/10
     #                                            (live capture, Claude Code 2.1.280, 2026-10-05)
     re.compile(r"^\S?\s*401\b.*\b(API key is invalid|invalid|unauthori[sz]ed|authentication)", re.I),
+    # ⏺ Please run /login · API Error: 401 API key is invalid.
+    #                      (final state after the retries, live capture 2026-10-05)
+    re.compile(r"^⏺\s*Please run /login\b"),
+    re.compile(r"^⏺.*\bAPI Error: 401\b"),
     # Claude Code's own prompts, at line start only. Deliberately NOT matched:
     # a third-party statusline's "Not logged in" row -- it re-renders only on
     # the next turn, so it keeps claiming logged-out after a /login (2026-10-05).
@@ -446,6 +450,16 @@ def stop_sweeper() -> None:
         PID_FILE.unlink(missing_ok=True)
         return
     os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+        time.sleep(0.2)
+    else:
+        os.kill(pid, signal.SIGKILL)
+        log(f"sweeper pid {pid} ignored SIGTERM for 10s; sent SIGKILL")
     PID_FILE.unlink(missing_ok=True)
     log(f"sweeper stopped pid {pid}")
     print(f"sweeper stopped (pid {pid})")
