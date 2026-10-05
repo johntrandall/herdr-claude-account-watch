@@ -35,6 +35,8 @@ Only the Python standard library is used.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -195,6 +197,22 @@ def log(msg: str) -> None:
         fh.write(line)
     if sys.stdout.isatty():
         sys.stdout.write(line)
+
+
+LOCK_FILE = STATE_DIR / "pass.lock"
+
+
+@contextlib.contextmanager
+def pass_lock():
+    """One pass at a time. The sweeper and the event hook both read-modify-
+    write incidents.json; without this a hook could re-add an incident the
+    sweep just cleared."""
+    with LOCK_FILE.open("w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def load_incidents() -> dict:
@@ -378,6 +396,11 @@ def check_pane(pane: dict, cfg: dict, incidents: dict) -> tuple[str, str] | None
 
 
 def sweep(cfg: dict) -> dict:
+    with pass_lock():
+        return _sweep(cfg)
+
+
+def _sweep(cfg: dict) -> dict:
     started = time.time()
     incidents = load_incidents()
     agents = list_watched_agents(cfg)
@@ -406,13 +429,14 @@ def event_hook(cfg: dict) -> None:
     pane_id = event.get("pane_id") or (event.get("pane") or {}).get("pane_id") or os.environ.get("HERDR_PANE_ID")
     if not pane_id:
         return
-    incidents = load_incidents()
-    agents = [a for a in list_watched_agents(cfg) if a["pane_id"] == pane_id]
-    if not agents:
-        return
-    check_pane(agents[0], cfg, incidents)
-    update_workspace_rollups(incidents, {agents[0].get("workspace_id")} - {None}, cfg)
-    save_incidents(incidents)
+    with pass_lock():
+        incidents = load_incidents()
+        agents = [a for a in list_watched_agents(cfg) if a["pane_id"] == pane_id]
+        if not agents:
+            return
+        check_pane(agents[0], cfg, incidents)
+        update_workspace_rollups(incidents, {agents[0].get("workspace_id")} - {None}, cfg)
+        save_incidents(incidents)
 
 
 # --------------------------------------------------------------------------
