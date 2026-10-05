@@ -13,25 +13,32 @@ the two banner families, and makes them visible in the sidebar, in
 `herdr agent list`, and as a desktop notification.
 
 ```text
+  ⎿  You've reached your Fable limit. Run /usage-credits to continue or switch
+     models with /model.
 ⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel
-⚠ /usage-credits to continue now
   ⎿  You've hit your weekly limit · resets 8am (America/New_York)
 ```
 
 ```text
+✻ 401 API key is invalid. · Retrying in 13s · attempt 8/10
+⏺ Please run /login · API Error: 401 API key is invalid.
   ⎿  API Error: 401 {"type":"error","error":{"type":"authentication_error",
        "message":"OAuth token has expired. Please run /login."}}
 ```
+
+The first line of each block is a live capture from Claude Code 2.1.280; the
+rest are the documented wordings for the weekly limit and an expired OAuth
+token.
 
 ## What it surfaces
 
 | Surface | Value | Where you see it |
 |---|---|---|
-| pane token `account` | `!! usage limit` or `!! logged out` | `herdr agent list` / `agent get` → `tokens`; `$account` in Agent sidebar rows |
+| pane token `account` | `!! usage limit` or `!! auth failed · /login` | `herdr agent list` / `agent get` → `tokens`; `$account` in Agent sidebar rows |
 | pane token `account_detail` | the matched banner line (≤ 80 chars) | same |
 | pane state label `idle` / `done` | the alert text | the sidebar status column reads `!! usage limit` instead of `idle` |
 | workspace token `claude_alert` | `!! 2 usage limit, 1 logged out` | `$claude_alert` in Spaces sidebar rows |
-| notification | `Claude usage limit: <pane name>` | herdr toast (system or in-app per your `[ui.toast]`) |
+| notification | `Claude usage limit: <pane name>` (once per incident) | herdr toast (system or in-app per your `[ui.toast]`) |
 
 Everything is **display-only metadata** (`pane.report_metadata`), never
 `pane.report_agent`. Taking lifecycle authority would make herdr skip its own
@@ -68,15 +75,20 @@ then `herdr server reload-config`.
   a detached `python3` loop that, every 60 s, runs `herdr agent list`,
   reads the visible screen of each Claude pane with `herdr pane read
   --source visible`, and classifies the bottom 30 non-empty lines.
-- **Event hook** on `pane.agent_status_changed`: re-checks just the pane
-  that changed, so a login error that interrupts a working turn is flagged
-  within a second. The usage-limit banner does not change herdr's state
-  (the pane stays `idle`), which is why the sweep exists too.
-- **Classifier**: a banner line must start with one of Claude Code's banner
-  glyphs (`⚠ ⎿ ✗ ✘ ⏺ ●`) or begin with the banner text itself. Transcript
-  text that merely *mentions* "Usage limit reached" does not match. A
-  logged-out verdict wins over a usage-limit verdict because it is the one
-  you have to act on.
+- **No per-event hook.** `pane.agent_status_changed` fires on every turn of
+  every pane and each run is a fresh `python3`; on a loaded Mac with ~120
+  panes that cost more than it was worth. One sweep per minute is enough for
+  this alert. The `event` entrypoint remains if you want to opt back in (see
+  the comment in `herdr-plugin.toml`).
+- **Classifier**: patterns are anchored to the *shape* of Claude Code's
+  error lines (`⚠ …`, `⎿  …`, `⏺ Please run /login …`, `✻ 401 …`), never to
+  bare phrases, so transcript text that merely *mentions* a banner does not
+  match. Only the **latest turn** counts: lines after the last `❯ <prompt>`
+  echo. A banner from a failed turn that is still on screen after a
+  successful retry therefore clears on the next sweep. A logged-out verdict
+  wins over a usage-limit verdict because it is the one you have to act on.
+- **Token pushes** happen only when the text changes or the TTL needs a
+  refresh, because every push redraws the sidebar for every attached client.
 
 ## Actions and panes
 
@@ -120,7 +132,10 @@ panes whatever herdr thinks is running in them.
 - A session that Claude Code resumes automatically ("continuing
   automatically at 8am") clears on the next sweep after it resumes; the
   plugin does not resume anything itself.
-- Only Claude Code's banner wording as of 2.1.287 is recognised. Add
+- A pane whose Claude process has exited but whose screen still looks like
+  Claude is still listed by herdr as a Claude agent; its alert clears
+  because the latest turn is clean, not because the agent left.
+- Only Claude Code's banner wording as of 2.1.280–2.1.287 is recognised. Add
   patterns in `USAGE_LIMIT_PATTERNS` / `LOGGED_OUT_PATTERNS` and a fixture
   in `tests/` when Anthropic changes the text.
 
