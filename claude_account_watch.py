@@ -83,10 +83,11 @@ LOGGED_OUT_PATTERNS = [
     re.compile(r"^⎿\s*.*\b(OAuth )?token has expired\b", re.I),
     re.compile(r"^⎿\s*.*\bInvalid API key\b", re.I),
     # ⚠ … run /login …   (startup / renewal warnings)
-    re.compile(r"^⚠.*\b/login\b"),
-    # Not logged in · Run /login   (status text; also what a wrapped statusline shows)
-    re.compile(r"\bNot logged in · Run /login\b"),
-    re.compile(r"^(Not logged in|Please run /login|Run /login to sign in)\b", re.I),
+    re.compile(r"^⚠.*(?<!\S)/login\b"),
+    # Claude Code's own prompts, at line start only. Deliberately NOT matched:
+    # a third-party statusline's "Not logged in" row -- it re-renders only on
+    # the next turn, so it keeps claiming logged-out after a /login (2026-10-05).
+    re.compile(r"^(Please run /login|Run /login to sign in)\b", re.I),
 ]
 
 KIND_LABEL = {

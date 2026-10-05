@@ -38,7 +38,7 @@ LOGGED_OUT_API = """
 """ + PROMPT_BOX
 
 LOGGED_OUT_BANNER = """
-  Not logged in · Run /login to sign in with your claude.ai account
+⚠ Your session has expired · run /login to renew
 """ + PROMPT_BOX
 
 CLEAN_WORKING = """
@@ -65,9 +65,9 @@ ASSISTANT_PROSE = """
   found none. Usage limit reached never appears either.
 """ + PROMPT_BOX
 
-# A statusline that reports login state, wrapped by the terminal so the
-# status text lands at a line start.
-WRAPPED_STATUSLINE = """
+# A third-party statusline that reports login state (stale until the next
+# turn re-renders it). Not Claude's banner: must NOT match.
+STATUSLINE_LOGIN_ROW = """
 ⏺ Done.
   identity: host: SusanBones | account: default
                                      Not logged in · Run /login
@@ -113,8 +113,8 @@ class ClassifyTests(unittest.TestCase):
     def test_assistant_prose_does_not_trip(self):
         self.assertIsNone(classify(ASSISTANT_PROSE))
 
-    def test_wrapped_statusline_login_state(self):
-        self.assertEqual(classify(WRAPPED_STATUSLINE)[0], "logged_out")
+    def test_statusline_login_row_ignored(self):
+        self.assertIsNone(classify(STATUSLINE_LOGIN_ROW))
 
     def test_old_banner_outside_tail(self):
         self.assertIsNone(classify(OLD_BANNER_SCROLLED_AWAY, tail=30))
