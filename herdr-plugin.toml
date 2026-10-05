@@ -10,11 +10,14 @@ platforms = ["linux", "macos"]
 [[startup]]
 command = ["python3", "claude_account_watch.py", "start"]
 
-# Cheap, event-driven re-check of the one pane whose status just changed. The
-# usage-limit banner leaves the pane `idle`, so the sweep above is still needed.
-[[events]]
-on = "pane.agent_status_changed"
-command = ["python3", "claude_account_watch.py", "event"]
+# No [[events]] hook on purpose: `pane.agent_status_changed` fires on every
+# turn of every pane, and each run is a fresh python3 process -- measured at
+# 0.5-5 s each across ~120 panes on a loaded Mac. The sweep catches a banner
+# within one interval, which is enough for this alert. The `event` entrypoint
+# still exists if you want to opt back in:
+#   [[events]]
+#   on = "pane.agent_status_changed"
+#   command = ["python3", "claude_account_watch.py", "event"]
 
 [[actions]]
 id = "sweep"

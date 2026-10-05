@@ -223,7 +223,7 @@ def load_incidents() -> dict:
 
 
 def save_incidents(data: dict) -> None:
-    tmp = INCIDENTS_FILE.with_suffix(".tmp")
+    tmp = INCIDENTS_FILE.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
     tmp.replace(INCIDENTS_FILE)
 
@@ -288,10 +288,22 @@ def _ttl_ms(cfg: dict) -> str:
     return str(int(cfg["SWEEP_INTERVAL_SECONDS"]) * int(cfg["TTL_FACTOR"]) * 1000)
 
 
+def _refresh_after(cfg: dict) -> float:
+    """Re-push an unchanged token after this many seconds so its TTL never lapses."""
+    return int(cfg["SWEEP_INTERVAL_SECONDS"]) * max(1, int(cfg["TTL_FACTOR"]) - 1)
+
+
 def raise_alert(pane: dict, kind: str, line: str, cfg: dict, incidents: dict) -> None:
     pane_id = pane["pane_id"]
     label = KIND_LABEL[kind]
     detail = line[:80]
+    prior = incidents.get(pane_id)
+    # Every token push redraws the sidebar for every attached client
+    # (herdr#4428), so re-push only when the text changed or the TTL is due.
+    if prior and prior.get("kind") == kind and prior.get("detail") == detail \
+            and time.time() - prior.get("pushed_at", 0) < _refresh_after(cfg):
+        prior["last_seen"] = time.time()
+        return
     herdr(
         "pane", "report-metadata", pane_id,
         "--source", PLUGIN_SOURCE,
@@ -301,12 +313,13 @@ def raise_alert(pane: dict, kind: str, line: str, cfg: dict, incidents: dict) ->
         "--state-label", f"done={label}",
         "--ttl-ms", _ttl_ms(cfg),
     )
-    prior = incidents.get(pane_id)
     if prior and prior.get("kind") == kind:
         prior["last_seen"] = time.time()
         prior["detail"] = detail
+        prior["pushed_at"] = time.time()
         return
     incidents[pane_id] = {
+        "pushed_at": time.time(),
         "kind": kind,
         "detail": detail,
         "first_seen": time.time(),
@@ -344,9 +357,12 @@ def update_workspace_rollups(incidents: dict, known_workspaces: set[str], cfg: d
     """Set the `claude_alert` workspace token where incidents exist; clear it
     only on workspaces we set it on earlier (tracked in rollups.json)."""
     try:
-        previously_set = set(json.loads(ROLLUPS_FILE.read_text(encoding="utf-8")))
+        previous = json.loads(ROLLUPS_FILE.read_text(encoding="utf-8"))
+        if isinstance(previous, list):  # pre-0.2 format
+            previous = {ws: {"value": None, "pushed_at": 0} for ws in previous}
     except (OSError, ValueError):
-        previously_set = set()
+        previous = {}
+    previously_set = set(previous)
     by_ws: dict[str, dict[str, int]] = {}
     for inc in incidents.values():
         ws = inc.get("workspace_id")
@@ -354,19 +370,24 @@ def update_workspace_rollups(incidents: dict, known_workspaces: set[str], cfg: d
             continue
         by_ws.setdefault(ws, {}).setdefault(inc["kind"], 0)
         by_ws[ws][inc["kind"]] += 1
-    now_set: set[str] = set()
+    now: dict[str, dict] = {}
     for ws, counts in by_ws.items():
         parts = [f"{n} {KIND_LABEL[k].lstrip('! ')}" for k, n in sorted(counts.items())]
+        value = "!! " + ", ".join(parts)
+        prev = previous.get(ws) or {}
+        if prev.get("value") == value and time.time() - prev.get("pushed_at", 0) < _refresh_after(cfg):
+            now[ws] = prev
+            continue
         herdr(
             "workspace", "report-metadata", ws,
             "--source", PLUGIN_SOURCE,
-            "--token", f"{WORKSPACE_TOKEN}=!! " + ", ".join(parts),
+            "--token", f"{WORKSPACE_TOKEN}={value}",
             "--ttl-ms", _ttl_ms(cfg),
         )
-        now_set.add(ws)
-    for ws in (previously_set - now_set) & (known_workspaces | previously_set):
+        now[ws] = {"value": value, "pushed_at": time.time()}
+    for ws in (previously_set - set(now)) & (known_workspaces | previously_set):
         herdr("workspace", "report-metadata", ws, "--source", PLUGIN_SOURCE, "--clear-token", WORKSPACE_TOKEN)
-    ROLLUPS_FILE.write_text(json.dumps(sorted(now_set)), encoding="utf-8")
+    ROLLUPS_FILE.write_text(json.dumps(now), encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
