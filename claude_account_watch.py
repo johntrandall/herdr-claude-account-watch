@@ -392,6 +392,9 @@ def event_hook(cfg: dict) -> None:
 
 
 def _running_pid() -> int | None:
+    """The sweeper's pid, or None. A pid is trusted only if the process is
+    alive AND its command line is this script's daemon -- a stale pid file
+    must never make `stop` signal an unrelated, recycled pid."""
     try:
         pid = int(PID_FILE.read_text().strip())
     except (OSError, ValueError):
@@ -399,6 +402,12 @@ def _running_pid() -> int | None:
     try:
         os.kill(pid, 0)
     except OSError:
+        return None
+    try:
+        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if "claude_account_watch.py" not in cmd or " daemon" not in cmd:
         return None
     return pid
 
