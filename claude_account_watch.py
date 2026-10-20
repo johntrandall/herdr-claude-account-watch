@@ -55,6 +55,10 @@ WORKSPACE_TOKEN = "claude_alert"
 # Detection
 # --------------------------------------------------------------------------
 
+# Rule (John, 2026-10-19): key ONLY on what Claude Code itself prints -- its
+# banner glyphs and its prompt box. Never on a statusline row (sightline or any
+# other): those are third-party, re-render lazily, and can change at any time.
+#
 # Every pattern is anchored to the SHAPE of a Claude Code error line, not just
 # its words: `⚠ <warning>` for live banners and `⎿  <error>` for a failed turn.
 # Assistant prose (`⏺ …`) and tool output that merely *mention* these phrases
