@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 — 2026-10-19
+
+Built after the 5-hour window closed on a dozen panes at 20:45 and not one tab changed. Three defects, each verified in isolation against the live fleet (146 Claude panes).
+
+- **One sweeper per herdr server.** After a reboot two servers (the default one and the `it` session server) ran the startup hook; the pid file was per plugin, so the one-pane session server owned the only sweeper and the 147-pane server went unwatched for six hours (`sweep: 1 panes` for 380 passes). pid, incidents, rollups and lock now live under `servers/<HERDR_SESSION | default | sock-…>/`; `status` lists the other servers' sweepers; a sweeper exits when its server socket is gone.
+- **Claude Code 2.1.304 banner shapes.** `⚠ Usage limit reached · limit resets 9:40pm` (countdown on a second, glyphless line), `⏺ Usage limit reached (again) · continuing automatically at …`, `⎿  You're out of usage credits. Run /usage-credits to keep using …`. `⏺ Usage limit reset · continuing automatically` ends an incident (auto-continue sends its prompt without a `❯` echo).
+- **Prompt-box anchoring.** The classifier reads the latest turn above the box plus everything below it, instead of a fixed 30-line tail that a 30-row statusline (sightline) filled entirely, hiding the banner.
+- **Context limit is a third kind**: `⎿  Context limit reached · /compact or /clear to continue` → `!! context limit · /compact`. Same shape of failure: the pane looks idle and is stuck until a human acts.
+- Usage-limit labels carry the reset time when the banner names one: `!! usage limit · resets 9:40pm`.
+- Tests: 25 (was 10), with the 2.1.304 captures as fixtures, statusline rows and a teammate's quoted failure as negatives.
+
 ## 0.2.0 — 2026-10-05
 
 Tested end to end in a dedicated herdr workspace against a real Claude Code

@@ -66,7 +66,15 @@ WORKSPACE_TOKEN = "claude_alert"
 USAGE_LIMIT_PATTERNS = [
     # ⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel
     # ⚠ Usage limit reached again after you continued · continuing automatically at 8am
-    re.compile(r"^⚠\s*Usage limit reached\b.*\b(continuing automatically|esc or type)", re.I),
+    # ⚠ Usage limit reached · limit resets 9:40pm              (2.1.304: the countdown moved
+    #   Continuing automatically at 9:40pm · esc to cancel …    to the next line, below the box)
+    re.compile(r"^⚠\s*Usage limit reached\b", re.I),
+    # ⏺ Usage limit reached · continuing automatically at 9:40pm · esc to cancel
+    # ⏺ Usage limit reached again · continuing automatically at 9:40pm · esc to cancel
+    #                                          (live capture, Claude Code 2.1.304, 2026-10-19)
+    re.compile(r"^⏺\s*Usage limit reached\b.*\bcontinuing automatically\b", re.I),
+    # ⎿  You're out of usage credits. Run /usage-credits to keep using Fable 5.1 or /model …
+    re.compile(r"^⎿\s*You.{0,3}re out of usage credits\b", re.I),
     # ⚠ /usage-credits to continue now
     re.compile(r"^⚠\s*/usage-credits to continue", re.I),
     # ⎿  You've hit your weekly limit · resets 8am (America/New_York)
@@ -78,8 +86,25 @@ USAGE_LIMIT_PATTERNS = [
     # ⎿  You've reached your Fable limit. Run /usage-credits to continue or switch
     #    models with /model.                      (live capture, Claude Code 2.1.280, 2026-10-05)
     re.compile(r"^⎿\s*You.{0,3}ve reached your .{0,40}\blimit\b", re.I),
-    re.compile(r"^⎿\s*.*\bRun /usage-credits to continue", re.I),
+    re.compile(r"^⎿\s*.*\bRun /usage-credits to (continue|keep using)", re.I),
 ]
+
+# ⏺ Usage limit reset · continuing automatically     (2.1.304: printed when the pane
+# resumes after the window reset; the banner lines above it are history)
+USAGE_LIMIT_RESET_PATTERNS = [
+    re.compile(r"^⏺\s*Usage limit reset\b", re.I),
+]
+
+# ⎿  Context limit reached · /compact or /clear to continue · auto-compact is off · /config to turn it on
+#                                          (live capture, Claude Code 2.1.304, 2026-10-19)
+# The pane sits idle until a human runs /compact or /clear: the same "looks
+# finished, is stuck" shape as a usage limit, so it gets the same treatment.
+CONTEXT_LIMIT_PATTERNS = [
+    re.compile(r"^⎿\s*Context limit reached\b.*(/compact|/clear)", re.I),
+]
+
+# "resets 9:40pm", "resets 8am (America/New_York)", "continuing automatically at 9:40pm"
+RESET_TIME = re.compile(r"\b(?:resets?|at)\s+(\d{1,2}(?::\d{2})?\s?[ap]m)\b", re.I)
 
 LOGGED_OUT_PATTERNS = [
     # ⎿  API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please run /login."}}
@@ -106,7 +131,18 @@ LOGGED_OUT_PATTERNS = [
 KIND_LABEL = {
     "usage_limit": "!! usage limit",
     "logged_out": "!! auth failed · /login",
+    "context_limit": "!! context limit · /compact",
 }
+
+
+def label_for(kind: str, line: str) -> str:
+    """The sidebar label: the kind, plus the reset time when the banner names one."""
+    label = KIND_LABEL[kind]
+    if kind == "usage_limit":
+        m = RESET_TIME.search(line)
+        if m:
+            label = f"{label} · resets {m.group(1).replace(' ', '')}"
+    return label
 
 
 PROMPT_ECHO = re.compile(r"^❯\s+\S")
@@ -123,11 +159,31 @@ def _candidate_lines(screen: str, tail: int) -> list[str]:
     counts (startup warnings, a fresh session).
     """
     lines = [ln.rstrip() for ln in screen.splitlines()]
-    non_empty = [ln.strip() for ln in lines if ln.strip()][-tail:]
+    non_empty = [ln.strip() for ln in lines if ln.strip()]
+    # Anchor on the prompt box: the LAST line starting with `❯` is the input
+    # box (empty, or holding typed text), never a transcript echo. The live
+    # `⚠` banner sits just below it and a `⎿` banner just above it; below
+    # them a statusline can run to 30+ rows (sightline on 2026-10-19), which
+    # pushed every banner out of a fixed 30-line tail. So: the latest turn
+    # from the `tail` lines above the box, plus everything below it.
+    # The box is a bare `❯`, or a `❯ <typed text>` right under the box's top
+    # border (`────`); a transcript echo `❯ <prompt>` has neither.
+    box = None
     for i in range(len(non_empty) - 1, -1, -1):
-        if PROMPT_ECHO.match(non_empty[i]):
-            return non_empty[i + 1:]
-    return non_empty
+        if non_empty[i] == "❯" or (
+            non_empty[i].startswith("❯") and i > 0 and non_empty[i - 1].startswith("─")
+        ):
+            box = i
+            break
+    if box is None:
+        before, after = non_empty[-tail:], []
+    else:
+        before, after = non_empty[max(0, box - tail):box], non_empty[box + 1:]
+    for i in range(len(before) - 1, -1, -1):
+        if PROMPT_ECHO.match(before[i]):
+            before = before[i + 1:]
+            break
+    return before + after
 
 
 def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
@@ -141,9 +197,17 @@ def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
     for line in reversed(lines):
         if any(pat.search(line) for pat in LOGGED_OUT_PATTERNS):
             return ("logged_out", line)
+    # A "Usage limit reset" line marks the end of the incident: banners above
+    # it are history even when no `❯` echo follows (auto-continue does not
+    # echo the prompt it sends, 2.1.304).
     for line in reversed(lines):
+        if any(pat.search(line) for pat in USAGE_LIMIT_RESET_PATTERNS):
+            break
         if any(pat.search(line) for pat in USAGE_LIMIT_PATTERNS):
             return ("usage_limit", line)
+    for line in reversed(lines):
+        if any(pat.search(line) for pat in CONTEXT_LIMIT_PATTERNS):
+            return ("context_limit", line)
     return None
 
 
@@ -161,9 +225,41 @@ def _env_dir(var: str, fallback: Path) -> Path:
 
 STATE_DIR = _env_dir("HERDR_PLUGIN_STATE_DIR", Path.home() / ".local" / "state" / "herdr-claude-account-watch")
 CONFIG_DIR = _env_dir("HERDR_PLUGIN_CONFIG_DIR", Path.home() / ".config" / "herdr-claude-account-watch")
-PID_FILE = STATE_DIR / "sweeper.pid"
 LOG_FILE = STATE_DIR / "watch.log"
-INCIDENTS_FILE = STATE_DIR / "incidents.json"
+
+
+def _socket_path() -> Path:
+    """The herdr server this process talks to (what the `herdr` CLI will use)."""
+    raw = os.environ.get("HERDR_SOCKET_PATH")
+    return Path(raw) if raw else Path.home() / ".config" / "herdr" / "herdr.sock"
+
+
+def _server_key() -> str:
+    """One sweeper per herdr SERVER, not per plugin install.
+
+    herdr can run several servers at once (the default one plus named
+    sessions, `HERDR_SESSION=it` → `sessions/it/herdr.sock`), and each runs
+    the plugin's startup hook with its own socket in the environment. The
+    plugin state dir is per plugin, so with a single pid file the first
+    server to start owned the sweeper and every other server went
+    unwatched: on 2026-10-19 a one-pane session server won the race after a
+    reboot and the 147-pane main server had no sweeper for six hours. The
+    pid, incidents and rollups therefore live under servers/<key>/.
+    """
+    session = os.environ.get("HERDR_SESSION", "").strip()
+    if session:
+        return re.sub(r"[^A-Za-z0-9_.-]", "_", session)
+    sock = _socket_path()
+    if sock == Path.home() / ".config" / "herdr" / "herdr.sock":
+        return "default"  # herdr passes HERDR_SOCKET_PATH explicitly even for the default server
+    return "sock-" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(sock)).strip("_")[-60:]
+
+
+SERVER_KEY = _server_key()
+SERVER_DIR = STATE_DIR / "servers" / SERVER_KEY
+SERVER_DIR.mkdir(parents=True, exist_ok=True)
+PID_FILE = SERVER_DIR / "sweeper.pid"
+INCIDENTS_FILE = SERVER_DIR / "incidents.json"
 
 
 def load_config() -> dict:
@@ -192,14 +288,14 @@ def load_config() -> dict:
 
 def log(msg: str) -> None:
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"{stamp} {msg}\n"
+    line = f"{stamp} [{SERVER_KEY}] {msg}\n"
     with LOG_FILE.open("a", encoding="utf-8") as fh:
         fh.write(line)
     if sys.stdout.isatty():
         sys.stdout.write(line)
 
 
-LOCK_FILE = STATE_DIR / "pass.lock"
+LOCK_FILE = SERVER_DIR / "pass.lock"
 
 
 @contextlib.contextmanager
@@ -295,7 +391,7 @@ def _refresh_after(cfg: dict) -> float:
 
 def raise_alert(pane: dict, kind: str, line: str, cfg: dict, incidents: dict) -> None:
     pane_id = pane["pane_id"]
-    label = KIND_LABEL[kind]
+    label = label_for(kind, line)
     detail = line[:80]
     prior = incidents.get(pane_id)
     # Every token push redraws the sidebar for every attached client
@@ -350,7 +446,7 @@ def clear_alert(pane_id: str, incidents: dict) -> None:
         log(f"CLEAR {pane_id} [{gone.get('name', '')}] {gone['kind']} resolved")
 
 
-ROLLUPS_FILE = STATE_DIR / "rollups.json"
+ROLLUPS_FILE = SERVER_DIR / "rollups.json"
 
 
 def update_workspace_rollups(incidents: dict, known_workspaces: set[str], cfg: dict) -> None:
@@ -536,24 +632,57 @@ def daemon(cfg: dict) -> None:
 
     signal.signal(signal.SIGTERM, _term)
     signal.signal(signal.SIGINT, _term)
-    log(f"sweeper loop every {cfg['SWEEP_INTERVAL_SECONDS']}s")
+    sock = _socket_path()
+    log(f"sweeper loop every {cfg['SWEEP_INTERVAL_SECONDS']}s · server socket {sock}")
+    socket_missing = 0
     while not stop["flag"]:
         started = time.time()
-        try:
-            sweep(load_config())
-        except Exception as exc:  # keep the loop alive; herdr may be restarting
-            log(f"sweep error: {exc}")
+        if sock.exists():
+            socket_missing = 0
+            try:
+                sweep(load_config())
+            except Exception as exc:  # keep the loop alive; herdr may be restarting
+                log(f"sweep error: {exc}")
+        else:
+            # The server this sweeper belongs to is gone. A restarted server
+            # runs the startup hook again and gets a fresh sweeper, so this
+            # one must not linger and shadow it through the pid file.
+            socket_missing += 1
+            if socket_missing >= int(cfg["TTL_FACTOR"]):
+                log(f"server socket {sock} gone for {socket_missing} sweeps; sweeper exiting")
+                break
         remaining = int(cfg["SWEEP_INTERVAL_SECONDS"]) - (time.time() - started)
         while remaining > 0 and not stop["flag"]:
             time.sleep(min(1.0, remaining))
             remaining -= 1
     log("sweeper exiting")
+    PID_FILE.unlink(missing_ok=True)
+
+
+def _other_servers() -> list[tuple[str, str]]:
+    """(key, 'running pid N' | 'not running') for every other server's state dir."""
+    out = []
+    root = STATE_DIR / "servers"
+    for d in sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []:
+        if d.name == SERVER_KEY:
+            continue
+        try:
+            pid = int((d / "sweeper.pid").read_text().strip())
+            os.kill(pid, 0)
+            state = f"running pid {pid}"
+        except (OSError, ValueError):
+            state = "not running"
+        out.append((d.name, state))
+    return out
 
 
 def status() -> None:
     pid = _running_pid()
+    print(f"server:  {SERVER_KEY} ({_socket_path()})")
     print(f"sweeper: {'running pid ' + str(pid) if pid else 'NOT running'}")
-    print(f"state:   {STATE_DIR}")
+    for key, state in _other_servers():
+        print(f"         other server {key}: {state}")
+    print(f"state:   {SERVER_DIR}")
     print(f"config:  {CONFIG_DIR / '.env'} ({'present' if (CONFIG_DIR / '.env').is_file() else 'defaults'})")
     incidents = load_incidents()
     if not incidents:

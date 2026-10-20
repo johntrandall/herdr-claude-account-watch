@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from claude_account_watch import classify  # noqa: E402
+from claude_account_watch import classify, label_for  # noqa: E402
 
 PROMPT_BOX = """
 ╭──────────────────────────────────────────────────────────────╮
@@ -111,6 +111,92 @@ OLD_BANNER_SCROLLED_AWAY = "⚠ Usage limit reached · continuing automatically 
     "⏺ step\n  ⎿  ok\n" * 30
 ) + PROMPT_BOX
 
+# Live captures from Claude Code 2.1.304, 2026-10-19 (5-hour window hit on
+# account claude2 across a dozen panes; none of the 0.2.0 patterns matched the
+# new ⚠ shape, whose countdown moved to a second line under the prompt box).
+V2_1_304_BANNER_UNDER_BOX = """
+⏺ Revising the plan for round 1's eight findings plus ho2's answers.
+  Made 1 scratchpad edit +181 (ctrl+o to expand)
+  ⎿  You've hit your session limit · resets 9:40pm (America/New_York)
+⏺ Usage limit reached · continuing automatically at 9:40pm · esc to cancel
+───────────────────────────────────────────────── applications-rules-split ─
+❯
+──────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 9:40pm
+    Continuing automatically at 9:40pm · esc to cancel · /usage-credits to continue now
+  goal: You are applications-rules-split, a rules lead in the application-funnel system…
+"""
+
+# Only the live banner under the box, the transcript above is ordinary work
+# (the pane was mid-turn when the window closed; herdr still says `working`).
+V2_1_304_BANNER_ONLY = """
+⏺ Migrate written; now the stage-move rules (drags, reopen, skipped steps, "I sent it").
+⏺ Searching for 1 pattern… (ctrl+o to expand)
+✢ Harmonizing… (3m 8s · ↓ 16.3k tokens)
+──────────────────────────────────────────────── applications-rules-packet ─
+❯
+──────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 9:40pm
+    Continuing automatically at 9:40pm · esc to cancel · /usage-credits to continue now
+  goal: You are applications-rules-packet, a rules lead…
+"""
+
+V2_1_304_REACHED_AGAIN = """
+⏺ Usage limit reached · continuing automatically at 9:40pm · esc to cancel
+✻ Sautéed for 32m 19s · done 8:48 PM
+❯ Of course every action should be logged and every run should have a run record.
+⏺ Usage limit reached again · continuing automatically at 9:40pm · esc to cancel
+  ⎿  You've hit your session limit · resets 9:40pm (America/New_York)
+     Use your limit reset to reset it now: clau.de/reset
+✻ Baked for 0s · done 8:50 PM
+""" + PROMPT_BOX
+
+V2_1_304_OUT_OF_CREDITS = """
+❯ continue
+  ⎿  You're out of usage credits. Run /usage-credits to keep using Fable 5.1 or /model to switch models.
+""" + PROMPT_BOX
+
+# After the window reset the pane resumes by itself and prints a reset line;
+# the auto-continue prompt is NOT echoed as `❯ …`, so the reset line is the
+# only thing separating the old banner from the new turn.
+V2_1_304_RESET_RESUMED = """
+⏺ Usage limit reached · continuing automatically at 8:01pm · esc to cancel
+  ⎿  You've hit your session limit · resets 8:01pm (America/New_York)
+⏺ Usage limit reset · continuing automatically
+⏺ The watch resumed cleanly after the limit pause: the probe is clean and the hourly cron is still armed.
+✻ Crunched for 19s · done 8:01 PM
+""" + PROMPT_BOX
+
+V2_1_304_CONTEXT_LIMIT = """
+› Message from @admin-technical-dc: Tailscale is back up as of 2026-10-15 ~09:30 EDT (ctrl+o to expand)
+  ⎿  Context limit reached · /compact or /clear to continue · auto-compact is off · /config to turn it on
+✻ Cooked for 0s · done Thursday 9:30 AM
+────────────────────────────────────────────────────── devonthink-steward ─
+❯
+──────────────────────────────────────────────────────────────────────────────
+  ⚠ link-bridge not running (sightline README)
+"""
+
+# sightline's statusline rows name the limit too; they re-render lazily and
+# must not be read as a banner (`provider: ▸5h 100%`, `└ ⚠ stale: rate limited`).
+V2_1_304_STATUSLINE_ONLY = """
+⏺ Clean tick: no anomalies. Nothing to log.
+✻ Brewed for 5s · done 8:24 PM
+──────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────
+  provider: ▸5h 100% @9:39pm | 7d all 27% @oct 25, 7:59pm (since oct 18) | 7d fable 42%
+  └ ⚠ stale: rate limited — retry in 7m06s as of 8:45pm
+  ├▸claude2  5h 99% @9:39pm (57m) | 7d 26% @oct 25, 7:59pm (5d 23h) | fable 42%
+"""
+
+# A teammate's failure report quotes the banner inside assistant output.
+V2_1_304_SUBAGENT_QUOTE = """
+⏺ Agent "Build c2 classify and cards" failed: Agent terminated early due to an API error: You've hit your session limit · resets 9:40pm (America/New_York)
+  (rate_limit, HTTP 429, request id req_011CgCZunR41vAWToc78Lx9o, model sent to the API: claude-opus-5-5)
+⏺ Picking that up myself.
+""" + PROMPT_BOX
+
 
 class ClassifyTests(unittest.TestCase):
     def test_weekly_limit(self):
@@ -165,6 +251,43 @@ class ClassifyTests(unittest.TestCase):
 
     def test_empty(self):
         self.assertIsNone(classify(""))
+
+
+
+    # --- Claude Code 2.1.304 shapes (2026-10-19) ---------------------------
+
+    def test_2_1_304_banner_under_box(self):
+        kind, line = classify(V2_1_304_BANNER_UNDER_BOX)
+        self.assertEqual(kind, "usage_limit")
+        self.assertEqual(label_for(kind, line), "!! usage limit · resets 9:40pm")
+
+    def test_2_1_304_banner_only_working_pane(self):
+        kind, line = classify(V2_1_304_BANNER_ONLY)
+        self.assertEqual(kind, "usage_limit")
+        self.assertTrue(line.startswith("⚠"), line)
+
+    def test_2_1_304_reached_again(self):
+        self.assertEqual(classify(V2_1_304_REACHED_AGAIN)[0], "usage_limit")
+
+    def test_2_1_304_out_of_credits(self):
+        self.assertEqual(classify(V2_1_304_OUT_OF_CREDITS)[0], "usage_limit")
+
+    def test_2_1_304_reset_line_clears(self):
+        self.assertIsNone(classify(V2_1_304_RESET_RESUMED))
+
+    def test_2_1_304_context_limit(self):
+        kind, line = classify(V2_1_304_CONTEXT_LIMIT)
+        self.assertEqual(kind, "context_limit")
+        self.assertEqual(label_for(kind, line), "!! context limit · /compact")
+
+    def test_2_1_304_statusline_rows_ignored(self):
+        self.assertIsNone(classify(V2_1_304_STATUSLINE_ONLY))
+
+    def test_2_1_304_subagent_quote_ignored(self):
+        self.assertIsNone(classify(V2_1_304_SUBAGENT_QUOTE))
+
+    def test_label_without_time(self):
+        self.assertEqual(label_for("usage_limit", "⚠ Usage limit reached"), "!! usage limit")
 
 
 if __name__ == "__main__":
