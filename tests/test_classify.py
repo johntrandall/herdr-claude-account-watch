@@ -198,6 +198,72 @@ V2_1_304_SUBAGENT_QUOTE = """
 """ + PROMPT_BOX
 
 
+# --- Claude Code 2.1.308: the usage-limit picker (2026-10-29) ---------------
+# Live capture of the picker, opened in a TEST pane with /rate-limit-options
+# (the same component Claude Code opens by itself at a limit). It replaces the
+# prompt box: no bare `❯` line, and its own `❯` is a select cursor.
+V2_1_308_DIALOG = """
+ ▐▛███▛█   Claude Code v2.1.308
+▝▜██████▀  Sonnet 5.5 · Claude Max
+ ▝▝   ▝▝   ~/admin-technical
+❯ /rate-limit-options
+────────────────────────────────────────────────────────────────────────────────
+  What do you want to do?
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Switch to usage credits
+    3. Upgrade your plan
+
+  Enter to confirm · Esc to cancel
+──────────────────────────────────────────────────────── TEST-rate-limit-dialog ─
+"""
+
+# The shape ho16 sat at for 15 hours (its transcript has the banner; the
+# architect saw the picker): the failed turn's banner, then the picker. 0.3.0
+# read `❯ 1. Stop…` as a prompt echo, cut the banner away, and saw nothing.
+V2_1_308_BANNER_THEN_DIALOG = """
+❯ Carry on with the practice checks.
+⏺ Reading the next card.
+  ⎿  You've hit your weekly limit · resets Oct 30 at 4pm (America/New_York)
+────────────────────────────────────────────────────────────────────────────────
+  What do you want to do?
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Switch to usage credits
+    3. Upgrade your plan
+
+  Enter to confirm · Esc to cancel
+───────────────────────────────────────────────── watchbill-rules-practice-ho16 ─
+"""
+
+# The picker alone (banner scrolled away), with the auto-resume option.
+V2_1_308_DIALOG_AUTO_RESUME = """
+⏺ Reading the next card.
+────────────────────────────────────────────────────────────────────────────────
+  What do you want to do?
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Wait here, then continue automatically at 4pm
+    3. Switch to usage credits
+
+  Enter to confirm · Esc to cancel
+──────────────────────────────────────────────────────────────────────────────────
+"""
+
+# The picker's text quoted in a transcript (a `cat` of this file) above a
+# live prompt box is not a live picker.
+V2_1_308_DIALOG_QUOTED = """
+⏺ Bash(sed -n 1,20p tests/test_classify.py)
+  What do you want to do?
+  ❯ 1. Stop and wait for limit to reset
+    2. Switch to usage credits
+⏺ That is the picker the fix keys on.
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+"""
+
+
 class ClassifyTests(unittest.TestCase):
     def test_weekly_limit(self):
         kind, line = classify(WEEKLY_LIMIT)
@@ -285,6 +351,27 @@ class ClassifyTests(unittest.TestCase):
 
     def test_2_1_304_subagent_quote_ignored(self):
         self.assertIsNone(classify(V2_1_304_SUBAGENT_QUOTE))
+
+    # --- Claude Code 2.1.308 usage-limit picker (2026-10-29) ---------------
+
+    def test_2_1_308_dialog_alone(self):
+        kind, line = classify(V2_1_308_DIALOG)
+        self.assertEqual(kind, "usage_limit")
+        self.assertIn("Stop and wait for limit to reset", line)
+
+    def test_2_1_308_banner_then_dialog(self):
+        kind, line = classify(V2_1_308_BANNER_THEN_DIALOG)
+        self.assertEqual(kind, "usage_limit")
+        self.assertTrue(line.startswith("⎿"), line)
+        self.assertEqual(label_for(kind, line), "!! usage limit · resets 4pm")
+
+    def test_2_1_308_dialog_auto_resume_names_time(self):
+        kind, line = classify(V2_1_308_DIALOG_AUTO_RESUME)
+        self.assertEqual(kind, "usage_limit")
+        self.assertEqual(label_for(kind, line), "!! usage limit · resets 4pm")
+
+    def test_2_1_308_quoted_dialog_ignored(self):
+        self.assertIsNone(classify(V2_1_308_DIALOG_QUOTED))
 
     def test_label_without_time(self):
         self.assertEqual(label_for("usage_limit", "⚠ Usage limit reached"), "!! usage limit")

@@ -65,7 +65,7 @@ WORKSPACE_TOKEN = "claude_alert"
 # (a transcript about limits, a `cat` of this file) must not match -- a
 # plugin that cries wolf gets disabled.
 #
-# Verified against Claude Code 2.1.287 strings; see tests/test_classify.py.
+# Verified against Claude Code 2.1.287–2.1.308 strings; see tests/test_classify.py.
 
 USAGE_LIMIT_PATTERNS = [
     # ⚠ Usage limit reached · continuing automatically at 8am · esc or type to cancel
@@ -149,7 +149,37 @@ def label_for(kind: str, line: str) -> str:
     return label
 
 
-PROMPT_ECHO = re.compile(r"^❯\s+\S")
+# The usage-limit picker Claude Code opens in place of the prompt box
+# (live capture, Claude Code 2.1.308, 2026-10-29; ho16 sat at it for 15 h):
+#   What do you want to do?
+#   ❯ 1. Stop and wait for limit to reset
+#     2. Switch to usage credits            (or: Wait here, then continue
+#     3. Upgrade your plan                   automatically at 4pm / Add funds…)
+#   Enter to confirm · Esc to cancel
+# Its `❯` is a select cursor, not a prompt echo or the input box.
+SELECT_CURSOR = re.compile(r"^❯\s+\d+\.\s")
+USAGE_LIMIT_DIALOG_TITLE = re.compile(r"^What do you want to do\?$")
+USAGE_LIMIT_DIALOG_OPTIONS = [
+    re.compile(r"^(?:❯\s*)?\d+\.\s+Stop and wait for limit to reset\b", re.I),
+    re.compile(r"^(?:❯\s*)?\d+\.\s+Wait here, then continue automatically\b", re.I),
+    re.compile(r"^(?:❯\s*)?\d+\.\s+Add funds to continue with usage\b", re.I),
+    re.compile(r"^(?:❯\s*)?\d+\.\s+Don.t continue automatically\b", re.I),
+]
+
+# `❯ <prompt>` echoes a submitted prompt; `❯ 1. …` is a picker's cursor.
+PROMPT_ECHO = re.compile(r"^❯\s+(?!\d+\.\s)\S")
+
+
+def _find_box(non_empty: list[str]) -> int | None:
+    """Index of the prompt input box, or None (a dialog has replaced it)."""
+    for i in range(len(non_empty) - 1, -1, -1):
+        if SELECT_CURSOR.match(non_empty[i]):
+            continue
+        if non_empty[i] == "❯" or (
+            non_empty[i].startswith("❯") and i > 0 and non_empty[i - 1].startswith("─")
+        ):
+            return i
+    return None
 
 
 def _candidate_lines(screen: str, tail: int) -> list[str]:
@@ -172,13 +202,7 @@ def _candidate_lines(screen: str, tail: int) -> list[str]:
     # from the `tail` lines above the box, plus everything below it.
     # The box is a bare `❯`, or a `❯ <typed text>` right under the box's top
     # border (`────`); a transcript echo `❯ <prompt>` has neither.
-    box = None
-    for i in range(len(non_empty) - 1, -1, -1):
-        if non_empty[i] == "❯" or (
-            non_empty[i].startswith("❯") and i > 0 and non_empty[i - 1].startswith("─")
-        ):
-            box = i
-            break
+    box = _find_box(non_empty)
     if box is None:
         before, after = non_empty[-tail:], []
     else:
@@ -188,6 +212,28 @@ def _candidate_lines(screen: str, tail: int) -> list[str]:
             before = before[i + 1:]
             break
     return before + after
+
+
+def _usage_limit_dialog(screen: str, lines: list[str]) -> str | None:
+    """The option line of a LIVE usage-limit picker, or None.
+
+    Live means the picker stands where the prompt box would be: no box on
+    screen, the title among the candidate lines, an option below it. The
+    same text quoted in a transcript (a `cat` of the tests) sits above a
+    box and does not count. The banner above the picker, when still in the
+    window, is matched first by the caller and carries the reset time; this
+    is for a picker whose banner has scrolled away. Prefers the option that
+    names a time ("Wait here, then continue automatically at 4pm").
+    """
+    if _find_box([ln.strip() for ln in screen.splitlines() if ln.strip()]) is not None:
+        return None
+    title = next((i for i, ln in enumerate(lines) if USAGE_LIMIT_DIALOG_TITLE.match(ln)), None)
+    if title is None:
+        return None
+    options = [ln for ln in lines[title + 1:] if any(p.search(ln) for p in USAGE_LIMIT_DIALOG_OPTIONS)]
+    if not options:
+        return None
+    return next((ln for ln in options if RESET_TIME.search(ln)), options[0])
 
 
 def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
@@ -209,6 +255,9 @@ def classify(screen: str, tail: int = 30) -> tuple[str, str] | None:
             break
         if any(pat.search(line) for pat in USAGE_LIMIT_PATTERNS):
             return ("usage_limit", line)
+    dialog = _usage_limit_dialog(screen, lines)
+    if dialog:
+        return ("usage_limit", dialog)
     for line in reversed(lines):
         if any(pat.search(line) for pat in CONTEXT_LIMIT_PATTERNS):
             return ("context_limit", line)
@@ -227,8 +276,13 @@ def _env_dir(var: str, fallback: Path) -> Path:
     return path
 
 
-STATE_DIR = _env_dir("HERDR_PLUGIN_STATE_DIR", Path.home() / ".local" / "state" / "herdr-claude-account-watch")
-CONFIG_DIR = _env_dir("HERDR_PLUGIN_CONFIG_DIR", Path.home() / ".config" / "herdr-claude-account-watch")
+# Outside herdr (a manual `check`, the tests) fall back to the dirs herdr
+# itself hands the plugin, so there is one state folder, not a second one a
+# reader takes for proof the watch is dead (2026-10-29: the old fallback,
+# ~/.local/state/herdr-claude-account-watch, sat empty beside the live one).
+PLUGIN_ID = "johntrandall.claude-account-watch"
+STATE_DIR = _env_dir("HERDR_PLUGIN_STATE_DIR", Path.home() / ".local" / "state" / "herdr" / "plugins" / PLUGIN_ID)
+CONFIG_DIR = _env_dir("HERDR_PLUGIN_CONFIG_DIR", Path.home() / ".config" / "herdr" / "plugins" / "config" / PLUGIN_ID)
 LOG_FILE = STATE_DIR / "watch.log"
 
 

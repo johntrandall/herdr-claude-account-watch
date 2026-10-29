@@ -33,7 +33,17 @@ the two banner families, and makes them visible in the sidebar, in
   ⎿  Context limit reached · /compact or /clear to continue · auto-compact is off · /config to turn it on
 ```
 
-Live captures from Claude Code 2.1.304 (2026-10-19) and 2.1.280 (2026-10-05). The third family, a session that has filled its context window and is waiting for a human `/compact`, looks finished for exactly the same reason, so since 0.3.0 it is flagged too.
+```text
+  What do you want to do?
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Switch to usage credits
+    3. Upgrade your plan
+
+  Enter to confirm · Esc to cancel
+```
+
+Live captures from Claude Code 2.1.308 (2026-10-29), 2.1.304 (2026-10-19) and 2.1.280 (2026-10-05). The last block is the usage-limit picker Claude Code opens in place of the prompt box; since 0.3.1 a live picker counts as a usage limit, with or without its banner still on screen. The third family, a session that has filled its context window and is waiting for a human `/compact`, looks finished for exactly the same reason, so since 0.3.0 it is flagged too.
 
 ## What it surfaces
 
@@ -137,9 +147,7 @@ Optional `KEY=VALUE` lines in `$(herdr plugin config-dir johntrandall.claude-acc
 | `NOTIFY` | `1` | `0` disables notifications |
 | `TTL_FACTOR` | `3` | token TTL = interval × factor |
 
-State lives in `HERDR_PLUGIN_STATE_DIR` (`watch.log`, `incidents.json`,
-`sweeper.pid`). `CAW_FORCE_PANES=w1:p2` is a test hook that watches those
-panes whatever herdr thinks is running in them.
+State lives in `HERDR_PLUGIN_STATE_DIR`, which herdr sets to `~/.local/state/herdr/plugins/johntrandall.claude-account-watch/`: `watch.log` there, and per herdr server `servers/<key>/incidents.json`, `rollups.json` and `sweeper.pid` (`<key>` is `default` for the main server, the session name for a named one). Run outside herdr, the script falls back to the same paths. Other tools may read `servers/<key>/incidents.json` as the current incident list: a JSON object keyed by pane id, each value holding `kind` (`usage_limit`, `logged_out` or `context_limit`), `detail` (the matched line), `first_seen` and `last_seen` (Unix seconds), `workspace_id` and `name`. It is replaced atomically on every sweep. `CAW_FORCE_PANES=w1:p2` is a test hook that watches those panes whatever herdr thinks is running in them.
 
 ## Limitations
 
@@ -152,7 +160,8 @@ panes whatever herdr thinks is running in them.
 - A pane whose Claude process has exited but whose screen still looks like
   Claude is still listed by herdr as a Claude agent; its alert clears
   because the latest turn is clean, not because the agent left.
-- Only Claude Code's banner wording as of 2.1.280–2.1.287 is recognised. Add
+- A picker you open yourself with `/rate-limit-options` reads as a usage limit until you close it.
+- Only Claude Code's banner and picker wording as of 2.1.280–2.1.308 is recognised. Add
   patterns in `USAGE_LIMIT_PATTERNS` / `LOGGED_OUT_PATTERNS` and a fixture
   in `tests/` when Anthropic changes the text.
 
